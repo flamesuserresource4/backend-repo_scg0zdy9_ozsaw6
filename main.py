@@ -1,6 +1,10 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Any, Dict
+import importlib
+import inspect
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -63,6 +67,45 @@ def test_database():
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+@app.get("/schema")
+def get_schema() -> Dict[str, Any]:
+    """Return Pydantic schemas defined in schemas.py so the UI can fast-generate collections.
+    Each class is mapped to a collection using its lowercase class name.
+    """
+    try:
+        schemas_module = importlib.import_module("schemas")
+    except Exception as e:
+        return {"error": f"Unable to import schemas: {str(e)}"}
+
+    definitions: Dict[str, Any] = {}
+
+    for name, obj in inspect.getmembers(schemas_module):
+        if inspect.isclass(obj) and issubclass(obj, BaseModel) and obj.__module__ == schemas_module.__name__:
+            model = obj
+            fields_info = []
+            for fname, f in model.model_fields.items():  # pydantic v2
+                field_type = str(f.annotation)
+                required = f.is_required()
+                default = None if required else (f.default if f.default is not None else None)
+                description = None
+                if getattr(f, 'description', None):
+                    description = f.description
+                fields_info.append({
+                    "name": fname,
+                    "type": field_type,
+                    "required": required,
+                    "default": default,
+                    "description": description,
+                })
+
+            definitions[name] = {
+                "collection": name.lower(),
+                "title": name,
+                "fields": fields_info,
+            }
+    
+    return {"schemas": definitions}
 
 
 if __name__ == "__main__":
